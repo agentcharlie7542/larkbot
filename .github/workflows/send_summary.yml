@@ -2,18 +2,27 @@ name: Send Slack Summary to Lark
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'
 
 jobs:
   send-summary:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
+
       - name: 패키지 설치
-        run: pip install requests
-      - name: 슬랙 요약 전송
+        run: pip install -r requirements.txt
+
+      - name: 슬랙 → 라크 요약 전송
         env:
-          LARK_WEBHOOK_URL: ${{ secrets.LARK_WEBHOOK_URL }}
+          SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LARK_WEBHOOK_URL: ${{ secrets.LARK_WEBHOOK_URL2 }}
         run: python send_summary.py
