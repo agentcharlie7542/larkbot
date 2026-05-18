@@ -1,0 +1,30 @@
+name: Send Slack Summary to Lark
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 매일 KST 09:00 (UTC 00:00) 실행.
+    # GitHub Actions cron은 트래픽에 따라 수 분 지연될 수 있음.
+    - cron: '0 0 * * *'
+
+jobs:
+  send-summary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: 패키지 설치
+        run: pip install -r requirements.txt
+
+      - name: 슬랙 → 라크 요약 전송
+        env:
+          SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LARK_WEBHOOK_URL: ${{ secrets.LARK_WEBHOOK_URL }}
+        run: python send_summary.py

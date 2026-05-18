@@ -1,49 +1,275 @@
-# -*- coding: utf-8 -*-
+"""
+Daily Slack -> Lark summary script.
+
+1. Read the past 24 hours of messages from every Slack channel the configured
+   token can see (works with both bot xoxb- and user xoxp- tokens).
+2. Summarize the activity in Korean using the Anthropic Claude API.
+3. Push the formatted summary to a Lark group via the incoming webhook.
+
+Environment variables (set as GitHub Actions secrets):
+  - SLACK_TOKEN           Slack bot or user token (xoxb-... or xoxp-...)
+  - ANTHROPIC_API_KEY     Anthropic API key (sk-ant-...)
+  - LARK_WEBHOOK_URL      Lark custom-bot incoming webhook
+  - ANTHROPIC_MODEL       (optional) override; defaults to claude-sonnet-4-6
+  - SLACK_CHANNEL_TYPES   (optional) comma list, default "public_channel,private_channel"
+  - INCLUDE_BOT_MESSAGES  (optional) "true" to keep bot messages; default false
+  - LOOKBACK_HOURS        (optional) int, default 24
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import time
+from datetime import datetime, timedelta, timezone
+
 import requests
 
-LARK_WEBHOOK_URL = "https://open.larksuite.com/open-apis/bot/v2/hook/9aee279d-1963-4520-a0da-0ba394f09736"
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+SLACK_TOKEN = os.environ["SLACK_TOKEN"]
+ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+LARK_WEBHOOK_URL = os.environ["LARK_WEBHOOK_URL"]
 
-message = """📋 오늘의 Slack 주요 요약 (2026년 5월 17일)
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+CHANNEL_TYPES = os.environ.get(
+    "SLACK_CHANNEL_TYPES", "public_channel,private_channel"
+)
+INCLUDE_BOT_MESSAGES = os.environ.get("INCLUDE_BOT_MESSAGES", "false").lower() == "true"
+LOOKBACK_HOURS = int(os.environ.get("LOOKBACK_HOURS", "24"))
+
+KST = timezone(timedelta(hours=9))
+NOW = datetime.now(KST)
+SINCE = NOW - timedelta(hours=LOOKBACK_HOURS)
+SINCE_TS = SINCE.timestamp()
+
+SLACK_API = "https://slack.com/api"
+ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+
+slack = requests.Session()
+slack.headers.update({"Authorization": f"Bearer {SLACK_TOKEN}"})
+
+
+# ---------------------------------------------------------------------------
+# Slack helpers
+# ---------------------------------------------------------------------------
+def slack_call(path: str, params: dict | None = None) -> dict:
+    """GET a Slack web API endpoint and handle the 429 retry header."""
+    for attempt in range(5):
+        resp = slack.get(f"{SLACK_API}/{path}", params=params, timeout=30)
+        if resp.status_code == 429:
+            wait = int(resp.headers.get("Retry-After", "2"))
+            print(f"  rate-limited on {path}, sleeping {wait}s")
+            time.sleep(wait + 1)
+            continue
+        resp.raise_for_status()
+        data = resp.json()
+        if not data.get("ok"):
+            err = data.get("error")
+            if err in {"ratelimited"}:
+                time.sleep(2)
+                continue
+            raise RuntimeError(f"Slack API error on {path}: {err}")
+        return data
+    raise RuntimeError(f"Slack API repeatedly failed on {path}")
+
+
+def list_accessible_channels() -> list[dict]:
+    """Return channels the token can actually read history from."""
+    channels: list[dict] = []
+    cursor: str | None = None
+    while True:
+        params = {
+            "exclude_archived": "true",
+            "limit": 200,
+            "types": CHANNEL_TYPES,
+        }
+        if cursor:
+            params["cursor"] = cursor
+        data = slack_call("conversations.list", params=params)
+        for ch in data.get("channels", []):
+            # Bot tokens need is_member; user tokens generally include all visible.
+            if SLACK_TOKEN.startswith("xoxb-") and not ch.get("is_member"):
+                continue
+            channels.append(ch)
+        cursor = data.get("response_metadata", {}).get("next_cursor")
+        if not cursor:
+            break
+    return channels
+
+
+def fetch_channel_history(channel_id: str) -> list[dict]:
+    """Return all messages newer than SINCE_TS for the given channel."""
+    messages: list[dict] = []
+    cursor: str | None = None
+    while True:
+        params = {
+            "channel": channel_id,
+            "oldest": f"{SINCE_TS:.6f}",
+            "limit": 200,
+        }
+        if cursor:
+            params["cursor"] = cursor
+        try:
+            data = slack_call("conversations.history", params=params)
+        except RuntimeError as exc:
+            print(f"  skipping {channel_id}: {exc}")
+            return []
+        batch = data.get("messages", [])
+        messages.extend(batch)
+        if not data.get("has_more"):
+            break
+        cursor = data.get("response_metadata", {}).get("next_cursor")
+        if not cursor:
+            break
+        time.sleep(1.1)  # be polite to Slack's rate limits
+    return messages
+
+
+# ---------------------------------------------------------------------------
+# Activity collection
+# ---------------------------------------------------------------------------
+def keep_message(m: dict) -> bool:
+    if m.get("subtype") in {"channel_join", "channel_leave"}:
+        return False
+    if not INCLUDE_BOT_MESSAGES and (m.get("bot_id") or m.get("subtype") == "bot_message"):
+        return False
+    if not (m.get("text") or "").strip():
+        return False
+    return float(m.get("ts", 0)) >= SINCE_TS
+
+
+def collect_activity() -> list[dict]:
+    channels = list_accessible_channels()
+    print(f"채널 {len(channels)}개 점검 중 (지난 {LOOKBACK_HOURS}시간)…")
+    activity: list[dict] = []
+    for ch in channels:
+        cid, name = ch["id"], ch.get("name", ch["id"])
+        msgs = fetch_channel_history(cid)
+        msgs = [m for m in msgs if keep_message(m)]
+        if not msgs:
+            continue
+        msgs.sort(key=lambda m: float(m.get("ts", 0)))
+        activity.append({"channel": f"#{name}", "messages": msgs})
+        print(f"  #{name}: {len(msgs)}건")
+        time.sleep(0.3)
+    return activity
+
+
+def render_for_llm(activity: list[dict]) -> str:
+    blocks: list[str] = []
+    for entry in activity:
+        block = [f"=== {entry['channel']} ==="]
+        for m in entry["messages"]:
+            ts = datetime.fromtimestamp(float(m["ts"]), KST).strftime("%H:%M")
+            speaker = m.get("user") or m.get("username") or m.get("bot_id") or "?"
+            text = (m.get("text") or "").strip().replace("\n", " ")
+            block.append(f"[{ts}] {speaker}: {text}")
+        blocks.append("\n".join(block))
+    return "\n\n".join(blocks)
+
+
+# ---------------------------------------------------------------------------
+# Anthropic summarization
+# ---------------------------------------------------------------------------
+SUMMARY_INSTRUCTIONS = """다음은 지난 24시간 동안 Slack 여러 채널에서 오간 메시지입니다.
+이를 토대로 한국어 일일 요약 보고서를 작성하세요.
+
+작성 규칙:
+- 전체를 한국어로 씁니다.
+- 잡담/사소한 내용은 제외하고 의사결정, 액션 아이템, 중요한 공지, 긴급 이슈, 핵심 논의에만 집중합니다.
+- 활동이 없거나 무의미한 채널은 보고서에서 생략합니다.
+- 채널마다 2~5개 불릿으로 요약합니다.
+- 상단에 "오늘의 핵심 하이라이트"를 두고 전체에서 가장 중요한 3~5개 항목을 뽑아 적습니다.
+- 마크다운 표/코드 블록을 쓰지 말고, 라크 메시지로 그대로 붙여 넣어도 가독성이 좋도록 단순 텍스트로 작성합니다.
+
+출력 형식:
+📋 오늘의 Slack 주요 요약 ({date})
 
 🔑 오늘의 핵심 하이라이트
-• 흑임자맛 450g 품절 처리 — 소비기한 임박으로 5/15(금) 품절 처리 완료. 5/21(목) 4,000개 입고 예정, 미숫가루맛도 5/22 입고 예정
-• 딸기맛 신제품 출시 준비 가속화 — 인플루언서 협업 컨택 완료, PA광고 6/1 라이브 목표, SNS 카운트다운 기획 진행 중, 얼리버드 5/26~29 (990월)
-• 올영세일 Co-MKT 협업 가이드 전달 — 기간 5/31~6/6, 브랜드 커뮤니케이션 가이드 및 엠블럼 소재 공유 완료
-• 신규 3PL(퍼즈) 이전 준비 마무리 단계 — 충남 계룡시, CJ택배, 이지어드민 WMS. 재고 이관 및 출고 일정 조율 중
-• 미국·일본 B2B 수출 물류 진행 — 40g 파우치 영문 라벨링 8팔렛 + 스타터팩 일본향 임가공 요청 (5/25~27 입고 예정)
+• ...
+• ...
 
 📢 채널별 요약
 
-#쇼트공지
-• 흑임자맛 450g 17개 잊량 — 5/15 품절 처리, 5/21 4,000개 재입고 예정
-• 미숫가루맛 450g 200여개 잊량 — 5/22 4,000개 입고 예정
-• 7개입 세트 — 미숫가루맛/흑임자맛/쿠키앤크림 작업 일정 확인 필요, 딸기맛 7개입 외피 발주 여부 확인 요청
+#채널명
+• ...
+• ...
 
-#마케팅팀 (주간 리포트 5/8~5/15)
-• [인플] 딸기맛 "사랑에 빠진 딸기" 콘셉트 확정, 소유 PPL 최종본 수령(6개월 활용), 도민이 협업 오픈 5/13 완료(비용 1,075만원 VAT별도)
-• [바이럴] 딸기맛 론칭 체험단 캐페인 신청 5/19~21, 선정 5/22, 발송 5/26, 마감 6/4. 포켓몬 GWP 강조 영상 제작 완료
-• [퍼포먼스] 티징캐페인 5/18~24, 얼리버드 5/26~29, 파워링크 딸기맛 전용 캐페인 검토(주 160만원 예상)
-• [MD] 얼리버드 프로모션 세부 기획(5/26~29, 990월, 밀잇 딸기 마켓), CRM 데이터 정리 완료
-• [마케팅] 인플 R&R 미팅 5/18 예정, 알림톡 고객명 대체 텍스트 설정 변경 완료(5/12)
+#채널명
+• ...
+"""
 
-#올리브영
-• 올영세일 Co-MKT 협업 커뮤니케이션 가이드 및 엠블럼 전달 완료 (세일 기간: 5/31~6/6)
-• 6월 클린밀 연합기획전 계획 — 기간 6/7~30, 카테고리관 원배너/온라인몰 GNB배너 노출, 재고 소진 목적 진행 검토 중
-• 파워팩(포켓몬 협업) 더블기획 — 크런티 추세 좋아 썸네일 뱤치 마킹 분석 완료, 교체 여부 확인 요청
 
-#물류
-• 미국향 물류 작업 요청 — 40g 파우치 영문 라벨링 8팔렛(신규세트 2종 포함 20,160개), 7개입 외포장 라벨 420개, 560g 본품 라벨 504개. 출고일 5/19 또는 5/26 조율 중
-• 스타터팩 임가공 요청(일본향) — 6·7·9·10종, 5/25~27 품고 입고 예정
-• 바코드 발번 요청 — 스타터팩 6·9·10·11종
+def summarize(messages_text: str) -> str:
+    prompt = SUMMARY_INSTRUCTIONS.format(date=NOW.strftime("%Y-%m-%d"))
+    payload = {
+        "model": ANTHROPIC_MODEL,
+        "max_tokens": 4096,
+        "messages": [
+            {
+                "role": "user",
+                "content": (
+                    prompt
+                    + "\n\n다음은 메시지 원문입니다:\n---\n"
+                    + messages_text[:120000]  # safety cap
+                    + "\n---"
+                ),
+            }
+        ],
+    }
+    headers = {
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+    resp = requests.post(ANTHROPIC_URL, headers=headers, json=payload, timeout=180)
+    if resp.status_code >= 400:
+        print(f"Anthropic 오류 본문: {resp.text}", file=sys.stderr)
+    resp.raise_for_status()
+    data = resp.json()
+    return data["content"][0]["text"].strip()
 
-#성장지원팀
-• 쇼피 주문 3건 매일 접수·발송 진행 중 (체험단 주문 별도 스타터팩 10개입 2세트로 발송)
-• 5/15 체험단 주문 1건 추가 접수 (260513A0A8WM6C)
 
-#무신사
-• 무신사 뷰티 오프라인 매장 POG 집기 — 운영 매장 성수 1개점 대상. 시안 요청일 3/24이었으나 Follow-up 요청(5/13)"""
+# ---------------------------------------------------------------------------
+# Lark push
+# ---------------------------------------------------------------------------
+def push_to_lark(text: str) -> None:
+    payload = {"msg_type": "text", "content": {"text": text}}
+    resp = requests.post(LARK_WEBHOOK_URL, json=payload, timeout=20)
+    print(f"Lark 응답: {resp.status_code} {resp.text}")
+    body = {}
+    try:
+        body = resp.json()
+    except Exception:
+        pass
+    if resp.status_code >= 400 or body.get("code") not in (0, None):
+        raise RuntimeError(f"Lark push failed: {resp.status_code} {resp.text}")
 
-payload = {"msg_type": "text", "content": {"text": message}}
-response = requests.post(LARK_WEBHOOK_URL, json=payload, timeout=10)
-print(f"status: {response.status_code}")
-print(f"response: {response.text}")
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+def main() -> None:
+    activity = collect_activity()
+    if not activity:
+        msg = (
+            f"📋 오늘의 Slack 주요 요약 ({NOW.strftime('%Y-%m-%d')})\n\n"
+            f"지난 {LOOKBACK_HOURS}시간 동안 주목할 만한 활동이 없었습니다."
+        )
+        push_to_lark(msg)
+        return
+
+    rendered = render_for_llm(activity)
+    print(f"LLM 입력 길이: {len(rendered)}자")
+    summary = summarize(rendered)
+    print("--- SUMMARY ---")
+    print(summary)
+    print("--- END ---")
+    push_to_lark(summary)
+
+
+if __name__ == "__main__":
+    main()
