@@ -26,5 +26,6 @@ jobs:
         env:
           SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          LARK_WEBHOOK_URL: ${{ secrets.LARK_WEBHOOK_URL }}
+          # 라크 웹훅은 LARK_WEBHOOK_URL2 시크릿에 등록되어 있어서 그 값을 사용합니다.
+          LARK_WEBHOOK_URL: ${{ secrets.LARK_WEBHOOK_URL2 }}
         run: python send_summary.py
