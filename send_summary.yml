@@ -6,6 +6,7 @@ on:
     # 매일 KST 09:00 (UTC 00:00) 실행.
     # GitHub Actions cron은 트래픽에 따라 수 분 지연될 수 있음.
     - cron: "0 0 * * *"
+
 jobs:
   send-summary:
     runs-on: ubuntu-latest
