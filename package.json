@@ -1,0 +1,21 @@
+{
+  "name": "larkbot",
+  "version": "1.0.0",
+  "description": "Lark 봇 자동화 허브 — 대화 요약/업무정리 + 큐텐 이벤트 스케줄 일일 발송",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.69.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "multer": "^2.0.1",
+    "node-cron": "^4.5.0"
+  }
+}

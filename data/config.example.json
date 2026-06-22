@@ -1,0 +1,20 @@
+{
+  "_note": "이 파일을 config.json 으로 복사해 사용하거나, 관리 페이지에서 추가하세요. config.json 은 .gitignore 대상(실 웹훅 URL 포함).",
+  "webhooks": [
+    {
+      "id": "example-room-1",
+      "name": "통합 게시방(예시)",
+      "webhookUrl": "https://open.larksuite.com/open-apis/bot/v2/hook/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+      "sourceChannelId": "",
+      "createdAt": "2026-06-22T00:00:00.000Z"
+    }
+  ],
+  "schedule": {
+    "cron": "0 8 * * *",
+    "timezone": "Asia/Tokyo",
+    "targetWebhookId": "example-room-1",
+    "sendTarget": "tomorrow",
+    "sendWhenEmpty": true,
+    "bilingual": false
+  }
+}

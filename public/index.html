@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>larkbot 관리</title>
+    <style>
+      :root { --bd: #d9dde3; --bg: #f6f7f9; --accent: #2a6df0; --muted: #6b7280; --ok: #15803d; --err: #b91c1c; }
+      * { box-sizing: border-box; }
+      body { font-family: -apple-system, "Apple SD Gothic Neo", "Segoe UI", system-ui, sans-serif; margin: 0; background: var(--bg); color: #1f2430; }
+      header { background: #1f2937; color: #fff; padding: 14px 20px; display: flex; align-items: center; gap: 14px; }
+      header h1 { font-size: 17px; margin: 0; }
+      header .status { font-size: 12px; color: #9ca3af; margin-left: auto; }
+      .tabs { display: flex; gap: 4px; padding: 0 16px; background: #1f2937; }
+      .tabs button { background: none; border: none; color: #cbd5e1; padding: 10px 16px; cursor: pointer; font-size: 14px; border-bottom: 3px solid transparent; }
+      .tabs button.active { color: #fff; border-bottom-color: var(--accent); font-weight: 600; }
+      main { max-width: 960px; margin: 20px auto; padding: 0 16px; }
+      .panel { display: none; }
+      .panel.active { display: block; }
+      .card { background: #fff; border: 1px solid var(--bd); border-radius: 10px; padding: 16px 18px; margin-bottom: 18px; }
+      .card h2 { font-size: 15px; margin: 0 0 12px; }
+      .card h3 { font-size: 13px; color: var(--muted); margin: 16px 0 8px; text-transform: uppercase; letter-spacing: .03em; }
+      label { display: block; font-size: 13px; margin: 8px 0 4px; color: #374151; }
+      input, select, textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--bd); border-radius: 7px; font-size: 14px; font-family: inherit; }
+      textarea { resize: vertical; }
+      .row { display: flex; gap: 10px; flex-wrap: wrap; }
+      .row > div { flex: 1; min-width: 160px; }
+      button.btn { background: var(--accent); color: #fff; border: none; border-radius: 7px; padding: 9px 14px; font-size: 14px; cursor: pointer; margin-top: 10px; }
+      button.btn.sec { background: #fff; color: #374151; border: 1px solid var(--bd); }
+      button.btn.tiny { padding: 4px 9px; font-size: 12px; margin: 0; }
+      button.btn.danger { background: #fff; color: var(--err); border: 1px solid #fecaca; }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+      th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eef0f3; vertical-align: top; }
+      th { color: var(--muted); font-weight: 600; }
+      .pill { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; background: #eef2ff; color: #3b4cca; }
+      pre { background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 8px; overflow: auto; font-size: 12.5px; white-space: pre-wrap; word-break: break-word; }
+      .msg { font-size: 13px; margin-top: 8px; min-height: 18px; }
+      .msg.ok { color: var(--ok); } .msg.err { color: var(--err); }
+      .muted { color: var(--muted); font-size: 12px; }
+      .inline { display: flex; align-items: center; gap: 8px; }
+      .inline input[type="checkbox"] { width: auto; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>🤖 larkbot 관리</h1>
+      <span class="status" id="status">상태 확인 중…</span>
+    </header>
+    <div class="tabs">
+      <button id="tab-summary" class="active" onclick="switchTab('summary')">① 대화 요약 봇</button>
+      <button id="tab-events" onclick="switchTab('events')">② 이벤트 스케줄 봇</button>
+    </div>
+
+    <main>
+      <!-- ===== 탭 1: 대화 요약 ===== -->
+      <section id="panel-summary" class="panel active">
+        <div class="card">
+          <h2>정보 방(웹훅) 관리</h2>
+          <div class="row">
+            <div><label>이름</label><input id="wh-name" placeholder="예: 통합 게시방" /></div>
+            <div><label>웹훅 URL</label><input id="wh-url" placeholder="https://open.larksuite.com/open-apis/bot/v2/hook/..." /></div>
+            <div><label>소스 채널 ID(선택)</label><input id="wh-src" placeholder="oc_..." /></div>
+          </div>
+          <button class="btn" onclick="addWebhook()">+ 웹훅 추가</button>
+          <div class="msg" id="wh-msg"></div>
+          <table id="wh-table"><thead><tr><th>이름</th><th>URL</th><th>소스</th><th></th></tr></thead><tbody></tbody></table>
+        </div>
+
+        <div class="card">
+          <h2>대화 요약 + 업무 정리</h2>
+          <label>대화 원문 붙여넣기</label>
+          <textarea id="sum-text" rows="9" placeholder="채팅방 대화를 그대로 붙여넣으세요."></textarea>
+          <div class="row">
+            <div>
+              <label>발송 대상 웹훅</label>
+              <select id="sum-target"><option value="">(발송 안 함 — 미리보기만)</option></select>
+            </div>
+          </div>
+          <button class="btn" onclick="runSummary()">요약 실행</button>
+          <button class="btn sec" onclick="runSummary(true)">요약 + 발송</button>
+          <div class="msg" id="sum-msg"></div>
+          <pre id="sum-out" style="display:none"></pre>
+        </div>
+      </section>
+
+      <!-- ===== 탭 2: 이벤트 스케줄 ===== -->
+      <section id="panel-events" class="panel">
+        <div class="card">
+          <h2>스케줄 이미지 → 이벤트 파싱</h2>
+          <label>큐텐 프로모션 캘린더 이미지</label>
+          <input type="file" id="img-file" accept="image/*" />
+          <button class="btn" onclick="parseImage()">이미지 파싱</button>
+          <div class="msg" id="parse-msg"></div>
+          <h3>파싱 결과 (수정 후 확정)</h3>
+          <label class="muted">source</label><input id="ev-source" placeholder="출처" />
+          <label class="muted">events (JSON 배열 — 직접 수정 가능)</label>
+          <textarea id="ev-json" rows="12" placeholder='[ { "date": "2026-07-01", "type": "megapo", "title": "...", "detail": "...", "period": "..." } ]'></textarea>
+          <button class="btn" onclick="confirmEvents()">확정 저장</button>
+          <button class="btn sec" onclick="loadEvents()">현재 저장본 불러오기</button>
+        </div>
+
+        <div class="card">
+          <h2>발송 스케줄 설정</h2>
+          <div class="row">
+            <div><label>cron 식</label><input id="sc-cron" placeholder="0 8 * * *" /></div>
+            <div><label>타임존</label><input id="sc-tz" placeholder="Asia/Tokyo" /></div>
+          </div>
+          <div class="row">
+            <div>
+              <label>발송 대상 웹훅</label>
+              <select id="sc-target"><option value="">(미설정 — 발송 스킵)</option></select>
+            </div>
+            <div>
+              <label>발송 기준</label>
+              <select id="sc-sendtarget"><option value="tomorrow">내일(翌日)</option><option value="today">오늘(本日)</option></select>
+            </div>
+          </div>
+          <label class="inline"><input type="checkbox" id="sc-empty" /> 이벤트 없는 날도 "발행 없음" 발송</label>
+          <label class="inline"><input type="checkbox" id="sc-bi" /> 한국어 헤더 병기</label>
+          <button class="btn" onclick="saveSchedule()">스케줄 저장</button>
+          <div class="msg" id="sc-msg"></div>
+        </div>
+
+        <div class="card">
+          <h2>발송 미리보기 / 즉시 발송</h2>
+          <div class="row">
+            <div><label>날짜 지정(선택, 미입력 시 스케줄 기준)</label><input id="pv-date" placeholder="2026-07-08" /></div>
+          </div>
+          <button class="btn sec" onclick="previewSend()">메시지 미리보기</button>
+          <button class="btn" onclick="sendNow()">지금 발송(대상 웹훅)</button>
+          <div class="msg" id="pv-msg"></div>
+          <pre id="pv-out" style="display:none"></pre>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      let WEBHOOKS = [];
+
+      function switchTab(name) {
+        for (const t of ["summary", "events"]) {
+          document.getElementById("tab-" + t).classList.toggle("active", t === name);
+          document.getElementById("panel-" + t).classList.toggle("active", t === name);
+        }
+      }
+      function setMsg(id, text, ok) {
+        const el = document.getElementById(id);
+        el.textContent = text;
+        el.className = "msg " + (ok === undefined ? "" : ok ? "ok" : "err");
+      }
+      function mask(url) { return url.length > 48 ? url.slice(0, 40) + "…" + url.slice(-6) : url; }
+
+      async function api(path, opts) {
+        const res = await fetch(path, opts);
+        let body;
+        try { body = await res.json(); } catch { body = {}; }
+        if (!res.ok) throw new Error(body.error || ("HTTP " + res.status));
+        return body;
+      }
+
+      async function loadStatus() {
+        try {
+          const s = await api("/api/status");
+          document.getElementById("status").textContent =
+            `모델 ${s.model} · LLM ${s.llmConfigured ? "✓" : "✗(키 없음)"} · cron ${s.schedule.cron} (${s.schedule.timezone})`;
+        } catch (e) { document.getElementById("status").textContent = "상태 오류: " + e.message; }
+      }
+
+      // ── 웹훅 ──
+      function fillWebhookSelects() {
+        for (const id of ["sum-target", "sc-target"]) {
+          const sel = document.getElementById(id);
+          const keep = sel.value;
+          const first = sel.querySelector("option").outerHTML;
+          sel.innerHTML = first + WEBHOOKS.map((w) => `<option value="${w.id}">${w.name}</option>`).join("");
+          sel.value = keep;
+        }
+      }
+      async function loadWebhooks() {
+        const { webhooks } = await api("/api/webhooks");
+        WEBHOOKS = webhooks;
+        const tb = document.querySelector("#wh-table tbody");
+        tb.innerHTML = webhooks.map((w) => `
+          <tr>
+            <td>${w.name}</td>
+            <td class="muted">${mask(w.webhookUrl)}</td>
+            <td class="muted">${w.sourceChannelId || "-"}</td>
+            <td style="white-space:nowrap">
+              <button class="btn tiny sec" onclick="testWebhook('${w.id}')">테스트</button>
+              <button class="btn tiny danger" onclick="delWebhook('${w.id}')">삭제</button>
+            </td>
+          </tr>`).join("") || `<tr><td colspan="4" class="muted">등록된 웹훅이 없습니다.</td></tr>`;
+        fillWebhookSelects();
+      }
+      async function addWebhook() {
+        const name = document.getElementById("wh-name").value.trim();
+        const webhookUrl = document.getElementById("wh-url").value.trim();
+        const sourceChannelId = document.getElementById("wh-src").value.trim();
+        if (!name || !webhookUrl) return setMsg("wh-msg", "이름과 URL은 필수입니다.", false);
+        try {
+          await api("/api/webhooks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, webhookUrl, sourceChannelId }) });
+          document.getElementById("wh-name").value = ""; document.getElementById("wh-url").value = ""; document.getElementById("wh-src").value = "";
+          setMsg("wh-msg", "추가됨", true); await loadWebhooks();
+        } catch (e) { setMsg("wh-msg", e.message, false); }
+      }
+      async function delWebhook(id) {
+        if (!confirm("이 웹훅을 삭제할까요?")) return;
+        try { await api("/api/webhooks/" + id, { method: "DELETE" }); await loadWebhooks(); setMsg("wh-msg", "삭제됨", true); }
+        catch (e) { setMsg("wh-msg", e.message, false); }
+      }
+      async function testWebhook(id) {
+        setMsg("wh-msg", "테스트 발송 중…");
+        try { const r = await api("/api/webhooks/" + id + "/test", { method: "POST" }); setMsg("wh-msg", r.ok ? "✅ 테스트 발송 성공" : "발송 실패: " + JSON.stringify(r.body), r.ok); }
+        catch (e) { setMsg("wh-msg", e.message, false); }
+      }
+
+      // ── 요약 ──
+      async function runSummary(send) {
+        const rawText = document.getElementById("sum-text").value;
+        if (!rawText.trim()) return setMsg("sum-msg", "대화 원문을 입력하세요.", false);
+        const webhookId = send ? document.getElementById("sum-target").value : "";
+        setMsg("sum-msg", "요약 생성 중…");
+        try {
+          const r = await api("/api/summary/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rawText, webhookId }) });
+          document.getElementById("sum-out").style.display = "block";
+          document.getElementById("sum-out").textContent = r.summary;
+          setMsg("sum-msg", r.sent ? `✅ 요약 + ${r.webhook} 발송 완료` : "요약 생성 완료(발송 안 함)", true);
+        } catch (e) { setMsg("sum-msg", e.message, false); }
+      }
+
+      // ── 이벤트 ──
+      async function parseImage() {
+        const f = document.getElementById("img-file").files[0];
+        if (!f) return setMsg("parse-msg", "이미지를 선택하세요.", false);
+        setMsg("parse-msg", "파싱 중… (수십 초 소요될 수 있음)");
+        const fd = new FormData(); fd.append("image", f);
+        try {
+          const r = await api("/api/events/parse", { method: "POST", body: fd });
+          document.getElementById("ev-source").value = r.source || "";
+          document.getElementById("ev-json").value = JSON.stringify(r.events, null, 2);
+          setMsg("parse-msg", `✅ ${r.events.length}건 파싱됨. 확인 후 [확정 저장]을 누르세요.`, true);
+        } catch (e) { setMsg("parse-msg", e.message, false); }
+      }
+      async function confirmEvents() {
+        let events;
+        try { events = JSON.parse(document.getElementById("ev-json").value); }
+        catch (e) { return setMsg("parse-msg", "events JSON 파싱 오류: " + e.message, false); }
+        const source = document.getElementById("ev-source").value;
+        try { const r = await api("/api/events/confirm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source, events }) }); setMsg("parse-msg", `✅ 저장됨 (${r.count}건)`, true); }
+        catch (e) { setMsg("parse-msg", e.message, false); }
+      }
+      async function loadEvents() {
+        const r = await api("/api/events");
+        document.getElementById("ev-source").value = r.source || "";
+        document.getElementById("ev-json").value = JSON.stringify(r.events, null, 2);
+        setMsg("parse-msg", `현재 저장본 ${r.events.length}건 불러옴`, true);
+      }
+
+      // ── 스케줄 ──
+      async function loadSchedule() {
+        const { schedule } = await api("/api/events/schedule");
+        document.getElementById("sc-cron").value = schedule.cron;
+        document.getElementById("sc-tz").value = schedule.timezone;
+        document.getElementById("sc-sendtarget").value = schedule.sendTarget;
+        document.getElementById("sc-empty").checked = !!schedule.sendWhenEmpty;
+        document.getElementById("sc-bi").checked = !!schedule.bilingual;
+        document.getElementById("sc-target").value = schedule.targetWebhookId || "";
+      }
+      async function saveSchedule() {
+        const patch = {
+          cron: document.getElementById("sc-cron").value.trim(),
+          timezone: document.getElementById("sc-tz").value.trim(),
+          targetWebhookId: document.getElementById("sc-target").value || null,
+          sendTarget: document.getElementById("sc-sendtarget").value,
+          sendWhenEmpty: document.getElementById("sc-empty").checked,
+          bilingual: document.getElementById("sc-bi").checked,
+        };
+        try { await api("/api/events/schedule", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }); setMsg("sc-msg", "✅ 저장 + cron 재등록됨", true); loadStatus(); }
+        catch (e) { setMsg("sc-msg", e.message, false); }
+      }
+
+      // ── 미리보기 / 발송 ──
+      async function previewSend() {
+        const date = document.getElementById("pv-date").value.trim();
+        setMsg("pv-msg", "미리보기 생성 중…");
+        try {
+          const r = await api("/api/events/preview-send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(date ? { date } : {}) });
+          document.getElementById("pv-out").style.display = "block";
+          document.getElementById("pv-out").textContent = r.text;
+          setMsg("pv-msg", `대상일 ${r.dateIso} · 이벤트 ${r.count}건`, true);
+        } catch (e) { setMsg("pv-msg", e.message, false); }
+      }
+      async function sendNow() {
+        if (!confirm("대상 웹훅으로 실제 발송합니다. 진행할까요?")) return;
+        setMsg("pv-msg", "발송 중…");
+        try {
+          const r = await api("/api/events/send-now", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+          document.getElementById("pv-out").style.display = "block";
+          document.getElementById("pv-out").textContent = r.text || "";
+          setMsg("pv-msg", r.sent ? `✅ ${r.dateIso} 발송 완료 (${r.webhook})` : "발송 안 됨: " + (r.reason || JSON.stringify(r.larkResponse)), r.sent);
+        } catch (e) { setMsg("pv-msg", e.message, false); }
+      }
+
+      // 초기 로드
+      (async function init() {
+        await loadStatus();
+        await loadWebhooks();
+        await loadSchedule();
+        try { await loadEvents(); } catch {}
+      })();
+    </script>
+  </body>
+</html>

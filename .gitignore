@@ -1,0 +1,9 @@
+node_modules/
+.env
+*.log
+.DS_Store
+
+# 런타임 데이터(실 웹훅 URL 등 민감정보 포함) — 시드/예시만 커밋
+data/*.json
+!data/events.json
+!data/config.example.json
